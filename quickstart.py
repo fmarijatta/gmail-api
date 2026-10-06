@@ -1,5 +1,6 @@
 import os.path
 import base64
+import re
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -54,8 +55,20 @@ def main():
             message_header.update({item['name']: item['value']})
         msg_subject = message_header['Subject']
         if msg_subject == "[AO3] You've got kudos!":
-          body = base64.urlsafe_b64decode(msg['payload']['parts'][0]['body']['data'])
-          print(body)
+          body = base64.urlsafe_b64decode(msg['payload']['parts'][0]['body']['data']).decode()
+
+          #Regex to extract key info from message body
+          body_main = re.split('[=]+', body)[1]
+          body_trim = re.split('-{40,}', body_main)[0]
+          body_list = re.split('-{10,}', body_trim)
+          body_strip = [x.strip() for x in body_list] 
+          regex = re.compile(r"\(https:\/\/archiveofourown.org\/works\/\d+\).", re.IGNORECASE)
+          body_clean = [re.sub(regex, '', x).strip() for x in body_strip]
+          print(body_clean)
+
+          # next step: convert list in pandas dataframe with title and who left kudos. count users and guests and sum for total
+          #Also need to extract date
+          break
 
   except HttpError as error:
       # TODO(developer) - Handle errors from gmail API.
