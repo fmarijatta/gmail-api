@@ -107,7 +107,6 @@ def main():
 
         # TO DO:
         ## Pagination!!
-        # break
     print(out)
 
   except HttpError as error:
