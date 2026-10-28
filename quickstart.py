@@ -1,10 +1,11 @@
 import os.path
-import base64
 import re
+import base64
+import pandas as pd
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+from googleapiclient.discovery import build #Construct a Resource for interacting with an API.
 from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
@@ -34,84 +35,104 @@ def main():
     with open("token.json", "w") as token:
       token.write(creds.to_json())
 
-  #Define parsing variables
-  url_regex = re.compile(r"\(https:\/\/archiveofourown.org\/works\/\d+\).", re.IGNORECASE)
+  #Define API variables
+  maxPages = 10
+  maxResults = 1
+  messages = []
   out = []
-
+  pages = 1
+  q_filter = "subject:([AO3] You've got kudos!)"
+  url_regex = re.compile(r"\(https:\/\/archiveofourown.org\/works\/\d+\).", re.IGNORECASE)
+  
+  #1168 currently in inbox. so should be 3 pages max
   try:
-    # Call the Gmail API
+    # Build the API connection
     service = build("gmail", "v1", credentials=creds)
-    results = (
-        service.users().messages().list(userId="me", labelIds=["INBOX"]).execute()
-    )
-    messages = results.get("messages", [])
-
-    if not messages:
-        print("No messages found.")
-        return
-    for message in messages:
-      msg = (
-          service.users().messages().get(userId="me", id=message["id"]).execute()
-      )
-      #Extract message header
-      message_header = {}
-      for item in msg['payload']['headers']:
-          message_header.update({item['name']: item['value']})
-      msg_subject = message_header['Subject']
-      if msg_subject == "[AO3] You've got kudos!":
-        body = base64.urlsafe_b64decode(msg['payload']['parts'][0]['body']['data']).decode()
-        message_date = message_header['Date']
-
-        #Regex to extract key info from message body. Will be converted to a function later!
-        body_main = re.split('[=]+', body)[1] # remove email title
-        body_trim = re.split('-{40,}', body_main)[0] # trim trailing dashes at the end of the body text
-        body_list = re.split('-{10,}', body_trim) #remove new-line dividers (----)
-        for item in body_list:
-          body_clean = re.sub(url_regex, '', item.strip()).strip() #trim spaces and remove url string
-          metrics, title = re.split(' left kudos on ', body_clean)
-          title = title.strip('"')
-          # print(title)
-          # print(metrics)
-
-          #Identify number of guest kudos
-          guest_match = re.search('[Aa\d]+\sguests?$', metrics)
-          if guest_match:
-            guests = guest_match.group()
-            n_guests = re.sub('\sguests?', '', guests)
-            n_guests = n_guests if n_guests.lower() != 'a' else 1
-            metrics = metrics.replace(guests, '')
-            and_match = re.search(',?\sand', metrics)
-            if and_match:
-              metrics = metrics.replace(and_match.group(), '').strip()
-          else:
-            n_guests = 0
-
-          # Identify number of user kudos
-          if len(metrics) == 0:
-            n_users = 0
-          else:
-            users = metrics.replace(',', '').replace(' and ', ' ')
-            n_users = users.count(' ') + 1
-          extracted_data = {
-            "date": message_date,
-            "title": title,
-            "n_users": n_users,
-            "n_guests": n_guests
-          }
-          out.append(extracted_data)
-          
-          # # Check output
-          # print(f'Number of users: {n_users}')
-          # print(f'Number of guests: {n_guests}')
-          # print('\n')
-
-        # TO DO:
-        ## Pagination!!
-    print(out)
-
   except HttpError as error:
       # TODO(developer) - Handle errors from gmail API.
       print(f"An error occurred: {error}")
+
+    #Extract first page of message IDs
+  results = (
+      service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=maxResults, q=q_filter).execute()
+  )
+  messages.extend(results.get("messages", []))
+  nextPageToken = results['nextPageToken']
+  while pages <= maxPages and nextPageToken != None:
+    print(f'Extracting message IDs for page {pages}...')
+    results = (
+            service.users().messages().list(userId="me", labelIds=["INBOX"], maxResults=maxResults, pageToken = nextPageToken, q=q_filter).execute()
+        )
+    try:
+      nextPageToken = results['nextPageToken']
+    except:
+      nextPageToken = None
+    messages.extend(results.get("messages", []))
+    pages += 1
+  print(f'{len(messages)} successfully extracted.')
+    
+
+  if not messages:
+      print("No messages found.")
+      return
+  for message in messages:
+    msg = (
+        service.users().messages().get(userId="me", id=message["id"]).execute()
+    )
+    #Extract message header
+    message_header = {}
+    for item in msg['payload']['headers']:
+        message_header.update({item['name']: item['value']})
+    msg_subject = message_header['Subject']
+    if msg_subject == "[AO3] You've got kudos!":
+      body = base64.urlsafe_b64decode(msg['payload']['parts'][0]['body']['data']).decode()
+      message_date = message_header['Date']
+
+      #Regex to extract key info from message body. Will be converted to a function later!
+      body_main = re.split('[=]+', body)[1] # remove email title
+      body_trim = re.split('-{40,}', body_main)[0] # trim trailing dashes at the end of the body text
+      body_list = re.split('-{10,}', body_trim) #remove new-line dividers (----)
+      for item in body_list:
+        body_clean = re.sub(url_regex, '', item.strip()).strip() #trim spaces and remove url string
+        metrics, title = re.split(' left kudos on ', body_clean)
+        title = title.strip('"')
+
+        #Identify number of guest kudos
+        guest_match = re.search('[Aa\d]+\sguests?$', metrics)
+        if guest_match:
+          guests = guest_match.group()
+          n_guests = re.sub('\sguests?', '', guests)
+          n_guests = n_guests if n_guests.lower() != 'a' else 1
+          metrics = metrics.replace(guests, '')
+          and_match = re.search(',?\sand', metrics)
+          if and_match:
+            metrics = metrics.replace(and_match.group(), '').strip()
+        else:
+          n_guests = 0
+
+        # Identify number of user kudos
+        if len(metrics) == 0:
+          n_users = 0
+        else:
+          users = metrics.replace(',', '').replace(' and ', ' ')
+          n_users = users.count(' ') + 1
+        extracted_data = {
+          "date": message_date,
+          "title": title,
+          "n_users": n_users,
+          "n_guests": n_guests
+        }
+        out.append(extracted_data)
+        
+        # # Check output
+        # print(f'Number of users: {n_users}')
+        # print(f'Number of guests: {n_guests}')
+        # print('\n')
+  print(out)
+
+
+
+
 
 
 if __name__ == "__main__":
