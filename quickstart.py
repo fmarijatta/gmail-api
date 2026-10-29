@@ -7,6 +7,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build #Construct a Resource for interacting with an API.
 from googleapiclient.errors import HttpError
+from modules.email_parse import extract_metrics
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
@@ -42,7 +43,7 @@ def main():
   out = []
   pages = 1
   q_filter = "subject:([AO3] You've got kudos!)"
-  url_regex = re.compile(r"\(https:\/\/archiveofourown.org\/works\/\d+\).", re.IGNORECASE)
+  
   
   #1168 currently in inbox. so should be 3 pages max
   try:
@@ -76,6 +77,7 @@ def main():
       print("No messages found.")
       return
   for message in messages:
+    message_id = message["id"]
     msg = (
         service.users().messages().get(userId="me", id=message["id"]).execute()
     )
@@ -87,48 +89,8 @@ def main():
     if msg_subject == "[AO3] You've got kudos!":
       body = base64.urlsafe_b64decode(msg['payload']['parts'][0]['body']['data']).decode()
       message_date = message_header['Date']
-
-      #Regex to extract key info from message body. Will be converted to a function later!
-      body_main = re.split('[=]+', body)[1] # remove email title
-      body_trim = re.split('-{40,}', body_main)[0] # trim trailing dashes at the end of the body text
-      body_list = re.split('-{10,}', body_trim) #remove new-line dividers (----)
-      for item in body_list:
-        body_clean = re.sub(url_regex, '', item.strip()).strip() #trim spaces and remove url string
-        metrics, title = re.split(' left kudos on ', body_clean)
-        title = title.strip('"')
-
-        #Identify number of guest kudos
-        guest_match = re.search('[Aa\d]+\sguests?$', metrics)
-        if guest_match:
-          guests = guest_match.group()
-          n_guests = re.sub('\sguests?', '', guests)
-          n_guests = n_guests if n_guests.lower() != 'a' else 1
-          metrics = metrics.replace(guests, '')
-          and_match = re.search(',?\sand', metrics)
-          if and_match:
-            metrics = metrics.replace(and_match.group(), '').strip()
-        else:
-          n_guests = 0
-
-        # Identify number of user kudos
-        if len(metrics) == 0:
-          n_users = 0
-        else:
-          users = metrics.replace(',', '').replace(' and ', ' ')
-          n_users = users.count(' ') + 1
-        extracted_data = {
-          "date": message_date,
-          "title": title,
-          "n_users": n_users,
-          "n_guests": n_guests
-        }
-        out.append(extracted_data)
-        
-        # # Check output
-        # print(f'Number of users: {n_users}')
-        # print(f'Number of guests: {n_guests}')
-        # print('\n')
-  print(out)
+      out.extend(extract_metrics(body, message_id, message_date))
+  print(pd.DataFrame(out))
 
 
 
